@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"flag"
+	"fmt"
 	"image"
 	"io"
 	"log"
@@ -85,7 +86,13 @@ func (in *inspect) runCmd() {
 		in.cmdOutput.WriteString("Define variables to run")
 		return
 	}
-	in.cmdOutput.WriteString("FIXME run the program") // TODO run it!
+
+	cmd := append([]string(nil), in.cmd...)
+	for ii, val := range in.val {
+		cmd[in.argi[ii]] = val
+	}
+	fmt.Fprintf(&in.cmdOutput, "FIXME run %q", cmd)
+	// TODO run it!
 }
 
 func (in *inspect) Update(ctx *platform.Context) (err error) {
