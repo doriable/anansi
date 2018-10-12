@@ -43,24 +43,50 @@ type inspect struct {
 	cmd  []string
 	argi []int
 	arg  []string
+	val  []string
 
 	ed platform.EditLine
 
-	cmdOutput anansi.Grid
+	cmdOutput anansi.Screen
 }
 
 func (in *inspect) setCmd(cmd []string) {
 	in.cmd = append(in.cmd[:0], cmd...)
 	in.argi = in.argi[:0]
 	in.arg = in.arg[:0]
+	in.val = in.val[:0]
 	for i, arg := range in.cmd {
 		if strings.HasPrefix(arg, "\\$") {
 			in.cmd[i] = arg[1:]
 		} else if strings.HasPrefix(arg, "$") {
-			in.arg = append(in.arg, arg[1:])
 			in.argi = append(in.argi, i)
+			in.arg = append(in.arg, arg[1:])
+			in.val = append(in.val, "")
 		}
 	}
+	in.runCmd()
+}
+
+func (in *inspect) haveAllArgVals() bool {
+	for _, arg := range in.val {
+		if arg == "" {
+			return false
+		}
+	}
+	return true
+}
+
+func (in *inspect) runCmd() {
+	in.cmdOutput.Clear()
+	if in.cmdOutput.Bounds().Empty() {
+		return
+	}
+	in.cmdOutput.To(image.Pt(1, 1))
+	if !in.haveAllArgVals() {
+		in.cmdOutput.WriteString("Define variables to run")
+		return
+	}
+	in.cmdOutput.WriteString("FIXME run the program") // TODO run it!
 }
 
 func (in *inspect) Update(ctx *platform.Context) (err error) {
@@ -102,14 +128,24 @@ func (in *inspect) Update(ctx *platform.Context) (err error) {
 		}
 		if attr != 0 {
 			ctx.Output.WriteSGR(attr)
-			ctx.Output.WriteString(arg)
-			ctx.Output.WriteSGR(ansi.SGRAttrClear)
-		} else {
-			ctx.Output.WriteString(arg)
 		}
+		ctx.Output.WriteString(arg)
+		if attr != 0 {
+			ctx.Output.WriteSGR(ansi.SGRAttrClear)
+		}
+	}
+	p.Y++
+
+	sz := ctx.Output.Bounds().Size()
+	sz.Y -= p.Y
+	if !in.cmdOutput.Bounds().Size().Eq(sz) {
+		log.Printf("resize cmd out %v", sz)
+		in.cmdOutput.Resize(sz)
+		in.runCmd()
 	}
 
 	// TODO scroll w/in cmdOutput
+	in.cmdOutput.CopyIntoAt(&ctx.Output.Grid, p)
 
 	return err
 }
