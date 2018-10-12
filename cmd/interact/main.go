@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/jcorbin/anansi"
@@ -87,12 +88,24 @@ func (in *inspect) runCmd() {
 		return
 	}
 
-	cmd := append([]string(nil), in.cmd...)
+	args := append([]string(nil), in.cmd...)
 	for ii, val := range in.val {
-		cmd[in.argi[ii]] = val
+		args[in.argi[ii]] = val
 	}
-	fmt.Fprintf(&in.cmdOutput, "FIXME run %q", cmd)
-	// TODO run it!
+
+	cmd := exec.Command(args[0], args[1:]...)
+	// TODO pipe into cmdOutput; pty
+	out, err := cmd.Output()
+
+	// TODO CR handling no work
+	fmt.Fprintf(&in.cmdOutput, "status: %v\r\n", cmd.ProcessState)
+	if err != nil {
+		in.cmdOutput.WriteSGR(ansi.SGRRed.FG())
+		fmt.Fprintf(&in.cmdOutput, "error: %v\r\n", err)
+		in.cmdOutput.WriteSGR(ansi.SGRAttrClear)
+	}
+	in.cmdOutput.Write(out)
+
 }
 
 func (in *inspect) Update(ctx *platform.Context) (err error) {
