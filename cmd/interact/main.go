@@ -177,39 +177,43 @@ func (in *inspect) Update(ctx *platform.Context) (err error) {
 		}
 
 		if in.edid == edid {
-			exit := false
-			defer func() {
-				if exit {
-					in.ed.Reset()
-					in.edid = 0
-					in.runCmd()
-				}
-			}()
-
-			if enter {
-				in.ed.Reset()
-				in.ed.Buf = append(in.ed.Buf, *val...)
-			}
-
-			done := false
-			defer func() {
-				if done {
-					if len(in.ed.Buf) > 0 {
-						*val = string(in.ed.Buf)
+			func() {
+				exit := false
+				defer func() {
+					if exit {
+						in.ed.Reset()
+						in.edid = 0
+						in.runCmd()
 					}
+				}()
+				if val == nil {
+					return
+				}
+
+				if enter {
+					in.ed.Reset()
+					in.ed.Buf = append(in.ed.Buf, *val...)
+				}
+
+				done := false
+				defer func() {
+					if done {
+						if len(in.ed.Buf) > 0 {
+							*val = string(in.ed.Buf)
+						}
+						exit = true
+					}
+				}()
+
+				in.ed.Box = r // TODO expand more space
+				if in.ed.Update(ctx); in.ed.Active() {
+					// if len(in.ed.Buf) == 0 && name != "" { }
+				} else if in.ed.Done() {
+					done = true
+				} else {
 					exit = true
 				}
 			}()
-
-			in.ed.Box = r // TODO expand more space
-			if in.ed.Update(ctx); in.ed.Active() {
-				// if len(in.ed.Buf) == 0 && name != "" { }
-			} else if in.ed.Done() {
-				done = true
-			} else {
-				exit = true
-			}
-
 		}
 
 	}
