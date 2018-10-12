@@ -22,9 +22,7 @@ func main() {
 
 // Run the demo under an active terminal platform.
 func Run(p *platform.Platform) error {
-
 	cmd := flag.Args()
-
 	for {
 		in := inspect{}
 		in.setCmd(cmd)
@@ -45,7 +43,8 @@ type inspect struct {
 	arg  []string
 	val  []string
 
-	ed platform.EditLine
+	edid int
+	ed   platform.EditLine
 
 	cmdOutput anansi.Screen
 }
@@ -68,8 +67,8 @@ func (in *inspect) setCmd(cmd []string) {
 }
 
 func (in *inspect) haveAllArgVals() bool {
-	for _, arg := range in.val {
-		if arg == "" {
+	for _, val := range in.val {
+		if val == "" {
 			return false
 		}
 	}
@@ -120,19 +119,79 @@ func (in *inspect) Update(ctx *platform.Context) (err error) {
 			ctx.Output.WriteRune(' ')
 		}
 		var attr ansi.SGRAttr
+		var val *string
 		if j < len(in.argi) && in.argi[j] == i {
 			attr = ansi.SGRCyan.FG()
-			// TODO interaction
+			val = &in.val[j]
+			j++
 		} else if i == 0 {
 			attr = ansi.SGRGreen.FG()
 		}
 		if attr != 0 {
 			ctx.Output.WriteSGR(attr)
 		}
+		var r image.Rectangle
+		r.Min = ctx.Output.Point
 		ctx.Output.WriteString(arg)
+		r.Max = ctx.Output.Point
+		r.Max.Y++
 		if attr != 0 {
 			ctx.Output.WriteSGR(ansi.SGRAttrClear)
 		}
+		if val != nil && *val != "" {
+			ctx.Output.WriteRune('=')
+			ctx.Output.WriteSGR(ansi.SGRBrightBlue.FG())
+			ctx.Output.WriteString(*val)
+			ctx.Output.WriteSGR(ansi.SGRAttrClear)
+		}
+
+		var enter bool
+		edid := i + 1
+		if ctx.Input.CountPressesIn(r, 1)%2 == 1 {
+			if in.edid == edid {
+				in.edid = 0
+			} else {
+				enter = true
+				in.edid = edid
+			}
+		}
+
+		if in.edid == edid {
+			exit := false
+			defer func() {
+				if exit {
+					in.ed.Reset()
+					in.edid = 0
+					in.runCmd()
+				}
+			}()
+
+			if enter {
+				in.ed.Reset()
+				in.ed.Buf = append(in.ed.Buf, *val...)
+			}
+
+			done := false
+			defer func() {
+				if done {
+					if len(in.ed.Buf) > 0 {
+						*val = string(in.ed.Buf)
+					}
+					exit = true
+				}
+			}()
+
+			in.ed.Box = r // TODO expand more space
+			if in.ed.Update(ctx); in.ed.Active() {
+				// if len(in.ed.Buf) == 0 && name != "" { }
+			} else if in.ed.Done() {
+				done = true
+			} else {
+				exit = true
+			}
+
+		}
+
 	}
 	p.Y++
 
