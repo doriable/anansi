@@ -104,6 +104,7 @@ func TestGrid_SubRect(t *testing.T) {
 				}},
 			},
 		},
+		// TODO cases that use SGR attrs
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			g := anansitest.ParseGridLines(tc.data)
