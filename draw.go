@@ -2,101 +2,60 @@ package anansi
 
 import "github.com/jcorbin/anansi/ansi"
 
-// DrawFlag is an optional flag to a drawing routine.
-type DrawFlag uint
-
-const (
-	// DrawZeroRunes disables rune transparency when drawing; zero runes from
-	// the source override any prior rune in the destination.
-	DrawZeroRunes DrawFlag = 1 << iota
-
-	// DrawZeroAttrFGs disables foreground transparency when drawing; zero
-	// foreground attributes from the source override those in the destination.
-	DrawZeroAttrFGs
-
-	// DrawZeroAttrBGs disables background transparency when drawing; zero
-	// background attributes from the source override those in the destination.
-	DrawZeroAttrBGs
-)
-
-// DrawGrid copies the source grid's cells into the destination grid.
+// DrawGrid copies the source grid's cells into the destination grid, applying
+// any optional styles to each cell.
 //
-// The copy is done transparently by default: zero values in the source aren't
-// copied, allowing prior destination values to remain. To control this, pass
-// any combination of the DrawZeroRunes, DrawZeroAttrFGs, or DrawZeroAttrBGs
-// flags.
+// The default is an opaque copy: each source cell simply overwrites each
+// corresponding destination cell.
+//
+// A (partially) transparent draw may be done by providing one or more style
+// options.
 //
 // Use sub-grids to copy to/from specific regions; see Grid.SubRect.
-func DrawGrid(dst, src Grid, flags DrawFlag) {
+func DrawGrid(dst, src Grid, styles ...Style) {
+	style := Styles(styles...)
+	if style == NoopStyle {
+		copyGrid(dst, src)
+		return
+	}
+	for dp, sp, di, si := copySetup(dst, src); sp.Y < src.Rect.Max.Y && dp.Y < dst.Rect.Max.Y; {
+		sii, dii := si, di
+		sp.X = src.Rect.Min.X
+		dp.X = dst.Rect.Min.X
+		for sp.X < src.Rect.Max.X && dp.X < dst.Rect.Max.X {
+			dr, da := dst.Rune[dii], dst.Attr[dii]
+			sr, sa := src.Rune[sii], src.Attr[sii]
+			if sr, sa = style.Style(dp, dr, sr, da, sa); sr != 0 {
+				dst.Rune[dii], dst.Attr[dii] = sr, sa
+			}
+			sii++
+			dii++
+			sp.X++
+		}
+		si += src.Stride
+		di += dst.Stride
+		dp.Y++
+	}
+}
+
+func copyGrid(dst, src Grid) {
 	stride := src.Rect.Dx()
 	if dstride := dst.Rect.Dx(); stride > dstride {
 		stride = dstride
 	}
-
-	if flags&DrawZeroRunes != 0 {
-		for sp, dp, di, si := copySetup(dst, src); sp.Y < src.Rect.Max.Y && dp.Y < dst.Rect.Max.Y; {
-			copy(dst.Rune[di:di+stride], src.Rune[si:si+stride])
-			sp.Y++
-			dp.Y++
-			si += src.Stride
-			di += dst.Stride
-		}
-	} else {
-		for sp, dp, di, si := copySetup(dst, src); sp.Y < src.Rect.Max.Y && dp.Y < dst.Rect.Max.Y; {
-			ii, jj := si, di
-			sp.X = src.Rect.Min.X
-			dp.X = dst.Rect.Min.X
-			for sp.X < src.Rect.Max.X && dp.X < dst.Rect.Max.X {
-				if r := src.Rune[ii]; r != 0 {
-					dst.Rune[jj] = r
-				}
-				ii++
-				jj++
-				sp.X++
-			}
-			si += src.Stride
-			di += dst.Stride
-			dp.Y++
-		}
+	for dp, sp, di, si := copySetup(dst, src); sp.Y < src.Rect.Max.Y && dp.Y < dst.Rect.Max.Y; {
+		copy(dst.Rune[di:di+stride], src.Rune[si:si+stride])
+		sp.Y++
+		dp.Y++
+		si += src.Stride
+		di += dst.Stride
 	}
-
-	dzf := flags&DrawZeroAttrFGs != 0
-	dzb := flags&DrawZeroAttrBGs != 0
-	if dzf && dzb {
-		for sp, dp, di, si := copySetup(dst, src); sp.Y < src.Rect.Max.Y && dp.Y < dst.Rect.Max.Y; {
-			copy(dst.Attr[di:di+stride], src.Attr[si:si+stride])
-			sp.Y++
-			dp.Y++
-			si += src.Stride
-			di += dst.Stride
-		}
-	} else {
-		const (
-			fgMask = ansi.SGRAttrFGMask | ansi.SGRAttrMask
-			bgMask = ansi.SGRAttrBGMask
-		)
-		for sp, dp, di, si := copySetup(dst, src); sp.Y < src.Rect.Max.Y && dp.Y < dst.Rect.Max.Y; {
-			ii, jj := si, di
-			sp.X = src.Rect.Min.X
-			dp.X = dst.Rect.Min.X
-			for sp.X < src.Rect.Max.X && dp.X < dst.Rect.Max.X {
-				da := dst.Attr[jj]
-				at := src.Attr[ii]
-				if dzf || at&fgMask != 0 {
-					da &= ^fgMask
-				}
-				if dzb || at&bgMask != 0 {
-					da &= ^bgMask
-				}
-				dst.Attr[jj] = da | at
-				ii++
-				jj++
-				sp.X++
-			}
-			si += src.Stride
-			di += dst.Stride
-			dp.Y++
-		}
+	for dp, sp, di, si := copySetup(dst, src); sp.Y < src.Rect.Max.Y && dp.Y < dst.Rect.Max.Y; {
+		copy(dst.Attr[di:di+stride], src.Attr[si:si+stride])
+		sp.Y++
+		dp.Y++
+		si += src.Stride
+		di += dst.Stride
 	}
 }
 
@@ -124,8 +83,9 @@ func DrawBitmap(dst Grid, src *Bitmap, styles ...Style) {
 		gp.X, bp.X = dst.Rect.Min.X, src.Rect.Min.X
 		for gp.X < dst.Rect.Max.X && bp.X < src.Rect.Max.X {
 			if i, ok := dst.CellOffset(gp); ok {
-				r, a := src.Rune(bp), dst.Attr[i]
-				if r, a = style.Style(bp, r, a); r != 0 {
+				dr, da := dst.Rune[i], dst.Attr[i]
+				sr := src.Rune(bp)
+				if r, a := style.Style(ansi.PtFromImage(bp), dr, sr, da, 0); r != 0 {
 					dst.Rune[i], dst.Attr[i] = r, a
 				}
 			}

@@ -1,8 +1,6 @@
 package anansi
 
 import (
-	"image"
-
 	"github.com/jcorbin/anansi/ansi"
 )
 
@@ -84,7 +82,7 @@ func RenderBitmap(buf *ansi.Buffer, bi *Bitmap, rawMode bool, styles ...Style) {
 			}
 		}
 		for p.X = bi.Rect.Min.X; p.X < bi.Rect.Max.X; p.X += 2 {
-			if r, a := style.Style(p, bi.Rune(p), 0); r != 0 {
+			if r, a := style.Style(ansi.PtFromImage(p), 0, bi.Rune(p), 0, 0); r != 0 {
 				if a != 0 {
 					buf.WriteSGR(a)
 				}
@@ -96,12 +94,19 @@ func RenderBitmap(buf *ansi.Buffer, bi *Bitmap, rawMode bool, styles ...Style) {
 	}
 }
 
-// Style allows styling of cell data during some rendering routine.
+// Style allows styling of cell data during a drawing or rendering.
 // Its eponymous method gets called for each cell as it is about to be
-// rendered, and may modify either the rune or graphical attributes about to be
-// rendered.
+// rendered
+//
+// The Style method receives the point being rendered on screen or within a
+// destination Grid. Its pr and pa arguments contain any prior rune and
+// attribute data when drawing in a Grid, while the r and a arguments contain
+// the source rune and attribute being drawn.
+//
+// Whatever rune and attribute values are returned by Style() will be the ones
+// drawn/rendered.
 type Style interface {
-	Style(p image.Point, r rune, a ansi.SGRAttr) (rune, ansi.SGRAttr)
+	Style(p ansi.Point, pr, r rune, pa, a ansi.SGRAttr) (rune, ansi.SGRAttr)
 }
 
 // Styles combines zero or more styles into a non-nil Style; if given none, it
@@ -130,25 +135,27 @@ func Styles(ss ...Style) Style {
 }
 
 // StyleFunc is a convenience type alias for implementing Style.
-type StyleFunc func(p image.Point, r rune, a ansi.SGRAttr) (rune, ansi.SGRAttr)
+type StyleFunc func(p ansi.Point, pr, r rune, pa, a ansi.SGRAttr) (rune, ansi.SGRAttr)
 
 // Style calls the aliased function pointer
-func (f StyleFunc) Style(p image.Point, r rune, a ansi.SGRAttr) (rune, ansi.SGRAttr) {
-	return f(p, r, a)
+func (f StyleFunc) Style(p ansi.Point, pr, r rune, pa, a ansi.SGRAttr) (rune, ansi.SGRAttr) {
+	return f(p, pr, r, pa, a)
 }
 
 type _noopStyle struct{}
 
-func (ns _noopStyle) Style(p image.Point, r rune, a ansi.SGRAttr) (rune, ansi.SGRAttr) { return r, 0 }
+func (ns _noopStyle) Style(p ansi.Point, pr, r rune, pa, a ansi.SGRAttr) (rune, ansi.SGRAttr) {
+	return r, 0
+}
 
 // NoopStyle is a no-op style, used as a zero fill by Styles.
 var NoopStyle Style = _noopStyle{}
 
 type styles []Style
 
-func (ss styles) Style(p image.Point, r rune, a ansi.SGRAttr) (rune, ansi.SGRAttr) {
+func (ss styles) Style(p ansi.Point, pr, r rune, pa, a ansi.SGRAttr) (rune, ansi.SGRAttr) {
 	for _, s := range ss {
-		r, a = s.Style(p, r, a)
+		r, a = s.Style(p, pr, r, pa, a)
 	}
 	return r, a
 }
@@ -157,7 +164,7 @@ func (ss styles) Style(p image.Point, r rune, a ansi.SGRAttr) (rune, ansi.SGRAtt
 type ElideStyle rune
 
 // Style replaces the passed rune with 0 if it equals the receiver.
-func (es ElideStyle) Style(p image.Point, r rune, a ansi.SGRAttr) (rune, ansi.SGRAttr) {
+func (es ElideStyle) Style(p ansi.Point, pr, r rune, pa, a ansi.SGRAttr) (rune, ansi.SGRAttr) {
 	if r == rune(es) {
 		r = 0
 	}
@@ -168,7 +175,7 @@ func (es ElideStyle) Style(p image.Point, r rune, a ansi.SGRAttr) (rune, ansi.SG
 type FillStyle rune
 
 // Style replaces the passed rune with the receiver if the passed rune is 0.
-func (fs FillStyle) Style(p image.Point, r rune, a ansi.SGRAttr) (rune, ansi.SGRAttr) {
+func (fs FillStyle) Style(p ansi.Point, pr, r rune, pa, a ansi.SGRAttr) (rune, ansi.SGRAttr) {
 	if r == 0 {
 		r = rune(fs)
 	}
@@ -179,9 +186,39 @@ func (fs FillStyle) Style(p image.Point, r rune, a ansi.SGRAttr) (rune, ansi.SGR
 type AttrStyle ansi.SGRAttr
 
 // Style replaces the passed attr with the receiver if the passed rune is non-0.
-func (as AttrStyle) Style(p image.Point, r rune, a ansi.SGRAttr) (rune, ansi.SGRAttr) {
+func (as AttrStyle) Style(p ansi.Point, pr, r rune, pa, a ansi.SGRAttr) (rune, ansi.SGRAttr) {
 	if r != 0 {
 		a = ansi.SGRAttr(as)
 	}
 	return r, a
+}
+
+// MaskedAttrStyle implements a Style that bitwise ors some attributes into a
+// masked copy of the prior attributes.
+type MaskedAttrStyle struct{ Mask, At ansi.SGRAttr }
+
+// Style applies mas.Mask and sets mas.At in a if r is not 0.
+func (mas MaskedAttrStyle) Style(p ansi.Point, pr, r rune, pa, a ansi.SGRAttr) (rune, ansi.SGRAttr) {
+	if r != 0 {
+		a = a&mas.Mask | mas.At
+	}
+	return r, a
+}
+
+// DrawAttrStyle builds a MaskedAttrStyle that implements DrawFlag attribute
+// semantics within a style: pre-existing foreground/background components may
+// independently show through, if the corresponding component in at is 0.
+func DrawAttrStyle(at ansi.SGRAttr, flags DrawFlag) MaskedAttrStyle {
+	const (
+		fgMask = ansi.SGRAttrFGMask | ansi.SGRAttrMask
+		bgMask = ansi.SGRAttrBGMask
+	)
+	mas := MaskedAttrStyle{^ansi.SGRAttr(0), at}
+	if flags&DrawZeroAttrFGs != 0 || at&fgMask != 0 {
+		mas.Mask &= ^fgMask
+	}
+	if flags&DrawZeroAttrBGs != 0 || at&bgMask != 0 {
+		mas.Mask &= ^bgMask
+	}
+	return mas
 }
