@@ -122,10 +122,10 @@ func (at *Attr) ioctl(request, arg1, arg2, arg3, arg4 uintptr) error {
 }
 
 func (at *Attr) getAttr() (attr syscall.Termios, err error) {
-	err = at.ioctl(syscall.TIOCGETA, uintptr(unsafe.Pointer(&attr)), 0, 0, 0)
+	err = at.ioctl(syscall.TIOCGETD, uintptr(unsafe.Pointer(&attr)), 0, 0, 0)
 	return
 }
 
 func (at *Attr) setAttr(attr syscall.Termios) error {
-	return at.ioctl(syscall.TIOCSETA, uintptr(unsafe.Pointer(&attr)), 0, 0, 0)
+	return at.ioctl(syscall.TIOCSETD, uintptr(unsafe.Pointer(&attr)), 0, 0, 0)
 }
